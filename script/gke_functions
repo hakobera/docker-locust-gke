@@ -1,0 +1,233 @@
+#######################################################
+# Google Container Engine helper functions
+#
+# Prerequisities
+#  - gcloud
+#  - jq
+#######################################################
+
+GCE_CMD="gcloud compute"
+GKE_CMD="gcloud preview container"
+
+function create_network() {
+  local network=$1
+  local range=$2
+
+  echo "Create network: $network"
+  $GCE_CMD networks describe $network
+  if [ "$?" = "0" ]; then
+    echo "[skip] $network is already exists."
+    return 0
+  fi
+
+  $GCE_CMD networks create $network --range $range
+}
+
+function delete_network() {
+  local network=$1
+
+  echo "Delete network: $network"
+  $GCE_CMD networks describe $network
+  if [ "$?" != "0" ]; then
+    return 1
+  fi
+  echo
+
+  echo "Delete following firewall rules used by $network"
+  $GCE_CMD firewall-rules list --regexp "^$network-.*$"
+  echo
+
+  for rule in $($GCE_CMD firewall-rules list --regexp "^$network-.*$" --format json | jq -r ".[].name" | tr '\n' ' ')
+  do
+    delete_firewall_rule $rule
+    echo
+  done
+  $GCE_CMD networks delete $network
+}
+
+function add_firewall_rule() {
+  local network=$1
+  local name=$2
+  local port=$3
+  local range=$4
+
+  echo "Add firewall rule: $1-allow-$name"
+  $GCE_CMD firewall-rules create $1-allow-$name \
+    --allow tcp:$3 \
+    --network $1 \
+    --source-ranges $4
+}
+
+function delete_firewall_rule() {
+  local rule=$1
+
+  echo "Delete firewall rule: $rule"
+  echo
+  $GCE_CMD firewall-rules delete $rule
+}
+
+function create_cluster() {
+  local network=$1
+  local num_nodes=${2:-1}
+  local machine_type=${3:-n1-standard-1}
+  local cluster=${4:-$GKE_CLUSTER}
+  local zone=${5:-$GKE_ZONE}
+
+  echo "Create cluster: $cluster"
+  $GKE_CMD clusters create $cluster \
+    --zone $zone \
+    --network $network \
+    --num-nodes $num_nodes \
+    --machine-type $machine_type \
+    --no-set-default
+}
+
+function delete_cluster() {
+  local cluster=${1:-$GKE_CLUSTER}
+  local zone=${2:-$GKE_ZONE}
+
+  echo "Delete cluster: $cluster"
+  echo
+  $GKE_CMD clusters describe $cluster --zone $zone
+  if [ "$?" != "0" ]; then
+    return 1
+  fi
+  echo
+
+  $GKE_CMD clusters delete $cluster --zone $zone
+}
+
+function describe_cluster() {
+  local cluster=${1:-$GKE_CLUSTER}
+  local zone=${2:-$GKE_ZONE}
+
+  echo "[Cluster]"
+  $GKE_CMD clusters describe $cluster --zone $zone
+  echo
+  echo "[Pods]"
+  $GKE_CMD pods list --cluster $cluster --zone $zone
+  echo
+  echo "[Replication Controllers]"
+  $GKE_CMD replicationcontrollers list --cluster $cluster --zone $zone
+  echo
+  echo "[Services]"
+  $GKE_CMD services list --cluster $cluster --zone $zone
+}
+
+function create_pod() {
+  local pod=$1
+  local config=$2
+  local cluster=${3:-$GKE_CLUSTER}
+  local zone=${4:-$GKE_ZONE}
+
+  echo "Create pod: $pod"
+  $GKE_CMD pods create \
+    --name $pod \
+    --cluster $cluster \
+    --zone $zone \
+    --config-file $config
+}
+
+function delete_pod() {
+  local pod=$1
+  local cluster=${2:-$GKE_CLUSTER}
+  local zone=${3:-$GKE_ZONE}
+
+  echo "Delete pod: $pod"
+  echo
+  $GKE_CMD pods delete $pod \
+    --cluster $cluster \
+    --zone $zone
+}
+
+function get_pod_ip() {
+  local pod=$1
+  local cluster=${2:-$GKE_CLUSTER}
+  zone=${3:-$GKE_ZONE}
+
+  $GKE_CMD kubectl --cluster $cluster --zone $zone get pods -o json \
+    | jq -r ".items[] | select(.id == \"$pod\") | .currentState.podIP"
+}
+
+function get_pod_host_ip() {
+  local pod=$1
+  local cluster=${2:-$GKE_CLUSTER}
+  local zone=${3:-$GKE_ZONE}
+
+  $GKE_CMD kubectl --cluster $cluster --zone $zone get pods -o json \
+    | jq -r ".items[] | select(.id == \"$pod\") | .currentState.hostIP"
+}
+
+function create_replication_controller() {
+  local replication_controller=$1
+  local config=$2
+  local cluster=${3:-$GKE_CLUSTER}
+  local zone=${4:-$GKE_ZONE}
+
+  echo "Create replication controllers: $replication_controller"
+  $GKE_CMD replicationcontrollers create \
+    --cluster $cluster \
+    --zone $zone \
+    --config-file $config
+}
+
+function delete_replication_controller() {
+  local replication_controller=$1
+  local cluster=${2:-$GKE_CLUSTER}
+  local zone=${3:-$GKE_ZONE}
+
+  echo "Delete replication controller: $replication_controller"
+  echo
+  $GKE_CMD replicationcontrollers delete $replication_controller \
+    --cluster $cluster \
+    --zone $zone
+}
+
+function create_service() {
+  local service=$1
+  local config=$2
+  local cluster=${3:-$GKE_CLUSTER}
+  local zone=${4:-$GKE_ZONE}
+
+  echo "Create service: $service"
+  $GKE_CMD services create \
+    --cluster $cluster \
+    --zone $zone \
+    --config-file $config
+}
+
+function delete_service() {
+  local service=$1
+  local cluster=${2:-$GKE_CLUSTER}
+  local zone=${3:-$GKE_ZONE}
+
+  echo "Delete service: $service"
+  echo
+  $GKE_CMD services delete $service \
+    --cluster $cluster \
+    --zone $zone
+}
+
+function get_service_portal_ip() {
+  local service=$1
+  local cluster=${2:-$GKE_CLUSTER}
+  local zone=${3:-$GKE_ZONE}
+
+  $GKE_CMD kubectl --cluster $cluster --zone $zone get services -o json \
+    | jq -r ".items[] | select(.id == \"$service\") | .portalIP"
+}
+
+function get_forwading_rule_ip() {
+  local name=$1
+
+  $GCE_CMD forwarding-rules list --format json \
+    | jq -r ".[] | select(.name == \"$name\") | .IPAddress"
+}
+
+function open_kubernetes_web() {
+  local cluster=${1:-$GKE_CLUSTER}
+  local zone=${2:-$GKE_ZONE}
+
+  open $($GKE_CMD clusters describe $cluster --zone $zone --format json | jq '{endpoint, user: .masterAuth.user, password: .masterAuth.password}' | jq -r '"https:////" + .user + ":" + .password + "@" + .endpoint + "/static/#/groups/host/selector/"')
+}
+

@@ -1,0 +1,47 @@
+{
+  "id": "locust-master-pod",
+  "apiVersion": "v1beta1",
+  "kind": "Pod",
+  "desiredState": {
+    "manifest": {
+      "version": "v1beta1",
+      "id": "locust-master-pod",
+      "containers": [
+        {
+          "name": "locust-master",
+          "image": "{{REGISTRY_IP}}:5000/{{IMAGE_ID}}",
+          "ports": [
+            {
+              "name": "locust-web-port",
+              "containerPort": 8089,
+              "hostPort": 8089
+            },
+            {
+              "name": "locust-master-port",
+              "containerPort": 5557,
+              "hostPort": 5557
+            },
+            {
+              "name": "locust-master-bind-port",
+              "containerPort": 5558,
+              "hostPort": 5558
+            }
+          ],
+          "env": [
+            {
+              "name": "LOCUST_MODE",
+              "value": "master"
+            },
+            {
+              "name": "TARGET_URL",
+              "value": "{{TARGET_URL}}"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "labels": {
+    "name": "locust-master"
+  }
+}

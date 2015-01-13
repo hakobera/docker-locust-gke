@@ -1,0 +1,231 @@
+#!/bin/bash
+
+BASEDIR=$(dirname $0)
+
+# source gke function library
+source $BASEDIR/gke_functions
+
+NETWORK_RANGE=${NETWORK_RANGE:-10.241.0.0/16}
+SOURCE_RANGES=${SOURCE_RANGES:-0.0.0.0/0}
+REGISTRY_PORT=${REGISTRY_PORT:-5000}
+LOCUST_WEB_PORT=8089
+LOCUST_SLAVE_COUNT=${LOCUST_SLAVE_COUNT:-2}
+
+WORK_DIR=./tmp
+
+if [ ! -d "$WORK_DIR" ]; then
+  mkdir $WORK_DIR
+fi
+
+# check required env
+check_and_export_cluster_envs() {
+  if [ "$GKE_CLUSTER" = "" ]; then
+    echo 'Environment value named GKE_CLUSTER must be set'
+    exit 1
+  fi
+  GKE_ZONE=${GKE_ZONE:-us-central1-a}
+
+  export GKE_CLUSTER
+  export GKE_ZONE
+}
+
+push_image() {
+  if [ "$IMAGE_ID" = "" ]; then
+    echo 'Environment value named IMAGE_ID must be set'
+    return 1
+  fi
+  if [ "$GCS_BUCKET" = "" ]; then
+    echo 'Environment value named GCS_BUCKET must be set'
+    return 1
+  fi
+
+  echo "Pushing image: $IMAGE_ID"
+
+  echo "=== env ==="
+  echo "IMAGE_ID: $IMAGE_ID"
+  echo "GCS_BUCKET: $GCS_BUCKET"
+  echo
+
+  echo "=== Start local docker registry ==="
+  docker pull google/docker-registry
+  echo "GCP_OAUTH2_REFRESH_TOKEN=$(gcloud auth print-refresh-token)" > $WORK_DIR/registry-params.env
+  echo "GCS_BUCKET=$GCS_BUCKET" >> $WORK_DIR/registry-params.env
+  local container_id=$(docker run -d --env-file=$WORK_DIR/registry-params.env -p $REGISTRY_PORT:$REGISTRY_PORT google/docker-registry)
+  echo "registry container id: $container_id"
+  echo
+
+  sleep 10s
+
+  echo "=== Build docker image ==="
+  local image_tag="localhost:$REGISTRY_PORT/$IMAGE_ID"
+  docker pull hakobera/locust
+  docker build -t $image_tag .
+  echo
+
+  echo "=== Push docker image ==="
+  docker push $image_tag --insecure-registry localhost:$REGISTRY_PORT
+  echo
+
+  echo "=== Stop local docker registry ==="
+  docker kill $container_id && docker rm $container_id
+}
+
+start() {
+  check_and_export_cluster_envs
+  echo "Starting GKE cluster: $GKE_CLUSTER in $GKE_ZONE"
+
+  if [ "$GKE_NETWORK" = "" ]; then
+    echo 'Environment value named GKE_NETWORK must be set'
+    exit 1
+  fi
+  if [ "$IMAGE_ID" = "" ]; then
+    echo 'Environment value named IMAGE_ID must be set'
+    return 1
+  fi
+  if [ "$GCS_BUCKET" = "" ]; then
+    echo 'Environment value named GCS_BUCKET must be set'
+    return 1
+  fi
+  if [ "$TARGET_URL" = "" ]; then
+    echo 'Environment value named TARGET_URL must be set'
+    return 1
+  fi
+
+  echo "=== env ==="
+  echo "IMAGE_ID: $IMAGE_ID"
+  echo "GCS_BUCKET: $GCS_BUCKET"
+  echo "TARGET_URL: $TARGET_URL"
+  echo
+
+  local configdir=./config
+
+  echo "=== Create network ==="
+  create_network $GKE_NETWORK $NETWORK_RANGE
+  add_firewall_rule $GKE_NETWORK ssh 22 $SOURCE_RANGES
+  add_firewall_rule $GKE_NETWORK locust-web 8089 $SOURCE_RANGES
+  echo
+
+  echo "=== Create cluster ==="
+  create_cluster $GKE_NETWORK $LOCUST_SLAVE_COUNT
+  if [ "$?" != "0" ]; then
+    echo "Create cluster failed: $GKE_CLUSTER in $GKE_ZONE"
+    return 1
+  fi
+  echo
+
+  echo "=== Create registry pod ==="
+  local registry_pod_config_file=registry-pod.json
+  sed -e "s/{{GCS_BUCKET}}/$GCS_BUCKET/" \
+      $configdir/$registry_pod_config_file.template \
+      > $WORK_DIR/$registry_pod_config_file
+  cat $WORK_DIR/$registry_pod_config_file
+  create_pod registry-pod $WORK_DIR/$registry_pod_config_file
+  echo
+
+  echo "=== Create registry service ==="
+  local registry_service_config_file=registry-service.json
+  cat $configdir/$registry_service_config_file
+  create_service registry-service $configdir/$registry_service_config_file
+  echo
+
+  local registry_ip=$(get_service_portal_ip registry-service $GKE_CLUSTER $GKE_ZONE)
+  echo "REGISTRY_IP: $registry_ip"
+
+  echo "=== Create locust master pod ==="
+  local locust_master_config_file=locust-master-pod.json
+  sed -e "s/{{REGISTRY_IP}}/$registry_ip/" \
+      -e "s/{{IMAGE_ID}}/$IMAGE_ID/" \
+      -e "s/{{TARGET_URL}}/$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')/" \
+      $configdir/$locust_master_config_file.template \
+      > $WORK_DIR/$locust_master_config_file
+  cat $WORK_DIR/$locust_master_config_file
+  create_pod locust-master-pod $WORK_DIR/$locust_master_config_file
+  echo
+
+  echo "=== Create locust web service ==="
+  local locust_web_config_file=locust-web-service.json
+  cat $configdir/$locust_web_config_file
+  create_service locust-web-service $configdir/$locust_web_config_file
+  echo
+
+  sleep 30s
+  local locust_master_ip=$(get_pod_ip locust-master-pod $GKE_CLUSTER $GKE_ZONE)
+  echo "MASTER_HOST: $locust_master_ip"
+
+  echo "=== Create locust slave replication controller ==="
+  local locust_slave_config_file=locust-slave-replicationcontroller.json
+  sed -e "s/{{REGISTRY_IP}}/$registry_ip/" \
+      -e "s/{{IMAGE_ID}}/$IMAGE_ID/" \
+      -e "s/{{TARGET_URL}}/$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')/" \
+      -e "s/{{MASTER_HOST}}/$locust_master_ip/" \
+      -e "s/{{LOCUST_SLAVE_COUNT}}/$LOCUST_SLAVE_COUNT/" \
+      $configdir/$locust_slave_config_file.template \
+      > $WORK_DIR/$locust_slave_config_file
+  cat $WORK_DIR/$locust_slave_config_file
+  create_replication_controller locust-slave $WORK_DIR/$locust_slave_config_file
+  echo
+
+  sleep 30s
+  echo "=== Results ==="
+  describe_cluster
+}
+
+stop() {
+  check_and_export_cluster_envs
+  echo "Stopping GKE cluster: $GKE_CLUSTER in $GKE_ZONE"
+
+  echo "=== Delete services expternal load balancer ==="
+  delete_service locust-web-service
+
+  echo "=== Delete cluster ==="
+  delete_cluster
+  echo
+
+  #echo "=== Delete network ==="
+  #delete_network $GKE_NETWORK
+}
+
+status() {
+  check_and_export_cluster_envs
+  echo "Show cluster status: $GKE_CLUSTER in $GKE_ZONE"
+  describe_cluster
+}
+
+open_kubernetes() {
+  check_and_export_cluster_envs
+  echo "Open kubernetes web: $GKE_CLUSTER in $GKE_ZONE"
+  open_kubernetes_web
+}
+
+open_locust_web() {
+  check_and_export_cluster_envs
+  echo "Open locust web: $GKE_CLUSTER in $GKE_ZONE"
+  open http://$(get_forwading_rule_ip locust-web-service):$LOCUST_WEB_PORT
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  status)
+    status
+    ;;
+  open-kubernetes)
+    open_kubernetes
+    ;;
+  open-locust)
+    open_locust_web
+    ;;
+  push)
+    push_image
+    ;;
+  *)
+    echo "Usage: cluster {start|stop|status|open-kubernetes|open-locust}" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

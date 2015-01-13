@@ -1,0 +1,11 @@
+{
+  "id": "locust-web-service",
+  "apiVersion": "v1beta1",
+  "kind": "Service",
+  "port": 8089,
+  "containerPort": "locust-web-port",
+  "selector": {
+    "name": "locust-master"
+  },
+  "createExternalLoadBalancer": true
+}

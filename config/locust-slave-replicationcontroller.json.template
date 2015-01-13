@@ -1,0 +1,43 @@
+{
+  "id": "locust-slave-replication-controller",
+  "apiVersion": "v1beta1",
+  "kind": "ReplicationController",
+  "desiredState": {
+    "replicas": {{LOCUST_SLAVE_COUNT}},
+    "replicaSelector": {
+      "name": "locust-slave"
+    },
+    "podTemplate": {
+      "desiredState": {
+        "manifest": {
+          "version": "v1beta1",
+          "id": "locust-slave-pod",
+          "containers": [
+            {
+              "name": "locust-slave",
+              "image": "{{REGISTRY_IP}}:5000/{{IMAGE_ID}}",
+              "ports": [],
+              "env": [
+                {
+                  "name": "LOCUST_MODE",
+                  "value": "slave"
+                },
+                {
+                  "name": "MASTER_HOST",
+                  "value": "{{MASTER_HOST}}"
+                },
+                {
+                  "name": "TARGET_URL",
+                  "value": "{{TARGET_URL}}"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "labels": {
+        "name": "locust-slave"
+      }
+    }
+  }
+}

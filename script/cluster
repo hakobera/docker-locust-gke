@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 BASEDIR=$(dirname $0)
 
@@ -34,40 +34,26 @@ push_image() {
     echo 'Environment value named IMAGE_ID must be set'
     return 1
   fi
-  if [ "$GCS_BUCKET" = "" ]; then
-    echo 'Environment value named GCS_BUCKET must be set'
-    return 1
-  fi
+
+  GKE_PROJECT=`gcloud config list --format json | jq -r ".core.project"`
 
   echo "Pushing image: $IMAGE_ID"
 
   echo "=== env ==="
+  echo "GKE_PROJECT: $GKE_PROJECT"
   echo "IMAGE_ID: $IMAGE_ID"
-  echo "GCS_BUCKET: $GCS_BUCKET"
   echo
-
-  echo "=== Start local docker registry ==="
-  docker pull google/docker-registry
-  echo "GCP_OAUTH2_REFRESH_TOKEN=$(gcloud auth print-refresh-token)" > $WORK_DIR/registry-params.env
-  echo "GCS_BUCKET=$GCS_BUCKET" >> $WORK_DIR/registry-params.env
-  local container_id=$(docker run -d --env-file=$WORK_DIR/registry-params.env -p $REGISTRY_PORT:$REGISTRY_PORT google/docker-registry)
-  echo "registry container id: $container_id"
-  echo
-
-  sleep 10s
 
   echo "=== Build docker image ==="
-  local image_tag="localhost:$REGISTRY_PORT/$IMAGE_ID"
+  local image_tag="gcr.io/$GKE_PROJECT/$IMAGE_ID"
   docker pull hakobera/locust
-  docker build -t $image_tag .
+  docker build -t tmp-$IMAGE_ID .
+  docker tag -f tmp-$IMAGE_ID $image_tag
   echo
 
   echo "=== Push docker image ==="
-  docker push $image_tag --insecure-registry localhost:$REGISTRY_PORT
+  gcloud preview docker push $image_tag
   echo
-
-  echo "=== Stop local docker registry ==="
-  docker kill $container_id && docker rm $container_id
 }
 
 start() {

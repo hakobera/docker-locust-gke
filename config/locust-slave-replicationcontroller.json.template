@@ -15,7 +15,7 @@
           "containers": [
             {
               "name": "locust-slave",
-              "image": "{{REGISTRY_IP}}:5000/{{IMAGE_ID}}",
+              "image": "{{IMAGE_TAG}}",
               "ports": [],
               "env": [
                 {

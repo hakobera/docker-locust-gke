@@ -17,6 +17,8 @@ if [ ! -d "$WORK_DIR" ]; then
   mkdir $WORK_DIR
 fi
 
+GKE_PROJECT=`gcloud config list --format json | jq -r ".core.project"`
+
 # check required env
 check_and_export_cluster_envs() {
   if [ "$GKE_CLUSTER" = "" ]; then
@@ -34,8 +36,6 @@ push_image() {
     echo 'Environment value named IMAGE_ID must be set'
     return 1
   fi
-
-  GKE_PROJECT=`gcloud config list --format json | jq -r ".core.project"`
 
   echo "Pushing image: $IMAGE_ID"
 
@@ -68,10 +68,6 @@ start() {
     echo 'Environment value named IMAGE_ID must be set'
     return 1
   fi
-  if [ "$GCS_BUCKET" = "" ]; then
-    echo 'Environment value named GCS_BUCKET must be set'
-    return 1
-  fi
   if [ "$TARGET_URL" = "" ]; then
     echo 'Environment value named TARGET_URL must be set'
     return 1
@@ -79,7 +75,7 @@ start() {
 
   echo "=== env ==="
   echo "IMAGE_ID: $IMAGE_ID"
-  echo "GCS_BUCKET: $GCS_BUCKET"
+  echo "GKE_PROJECT: $GKE_PROJECT"
   echo "TARGET_URL: $TARGET_URL"
   echo
 
@@ -99,28 +95,11 @@ start() {
   fi
   echo
 
-  echo "=== Create registry pod ==="
-  local registry_pod_config_file=registry-pod.json
-  sed -e "s/{{GCS_BUCKET}}/$GCS_BUCKET/" \
-      $configdir/$registry_pod_config_file.template \
-      > $WORK_DIR/$registry_pod_config_file
-  cat $WORK_DIR/$registry_pod_config_file
-  create_pod registry-pod $WORK_DIR/$registry_pod_config_file
-  echo
-
-  echo "=== Create registry service ==="
-  local registry_service_config_file=registry-service.json
-  cat $configdir/$registry_service_config_file
-  create_service registry-service $configdir/$registry_service_config_file
-  echo
-
-  local registry_ip=$(get_service_portal_ip registry-service $GKE_CLUSTER $GKE_ZONE)
-  echo "REGISTRY_IP: $registry_ip"
+  local image_tag="gcr.io\/$GKE_PROJECT\/$IMAGE_ID"
 
   echo "=== Create locust master pod ==="
   local locust_master_config_file=locust-master-pod.json
-  sed -e "s/{{REGISTRY_IP}}/$registry_ip/" \
-      -e "s/{{IMAGE_ID}}/$IMAGE_ID/" \
+  sed -e "s/{{IMAGE_TAG}}/$image_tag/" \
       -e "s/{{TARGET_URL}}/$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')/" \
       $configdir/$locust_master_config_file.template \
       > $WORK_DIR/$locust_master_config_file
@@ -140,8 +119,7 @@ start() {
 
   echo "=== Create locust slave replication controller ==="
   local locust_slave_config_file=locust-slave-replicationcontroller.json
-  sed -e "s/{{REGISTRY_IP}}/$registry_ip/" \
-      -e "s/{{IMAGE_ID}}/$IMAGE_ID/" \
+  sed -e "s/{{IMAGE_TAG}}/$image_tag/" \
       -e "s/{{TARGET_URL}}/$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')/" \
       -e "s/{{MASTER_HOST}}/$locust_master_ip/" \
       -e "s/{{LOCUST_SLAVE_COUNT}}/$LOCUST_SLAVE_COUNT/" \

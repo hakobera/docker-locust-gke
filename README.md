@@ -8,7 +8,6 @@ First, you should push image into your private repository.
 
 ```
 $ export IMAGE_ID=locust-gke
-$ export GCS_BUCKET=<your-bucket>
 $ ./script/cluster push
 ```
 
@@ -25,7 +24,6 @@ $ export GKE_ZONE=<your-zone>
 
 ```
 $ IMAGE_ID=locust-gke \
-  GCS_BUCKET=<your-bucket> \
   GKE_NETWORK=<your-network> ]
   TARGET_URL=<your-load-test-target-url> \
   LOCUST_SLAVE_COUNT=2 \

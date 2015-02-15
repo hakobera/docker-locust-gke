@@ -79,6 +79,9 @@ function create_cluster() {
     --network $network \
     --num-nodes $num_nodes \
     --machine-type $machine_type \
+    --scopes \
+      https://www.googleapis.com/auth/bigquery \
+      https://www.googleapis.com/auth/logging.write \
     --no-set-default
 }
 

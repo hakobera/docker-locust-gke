@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash
 
 BASEDIR=$(dirname $0)
 
@@ -17,8 +17,6 @@ if [ ! -d "$WORK_DIR" ]; then
   mkdir $WORK_DIR
 fi
 
-GKE_PROJECT=`gcloud config list --format json | jq -r ".core.project"`
-
 # check required env
 check_and_export_cluster_envs() {
   if [ "$GKE_CLUSTER" = "" ]; then
@@ -31,42 +29,52 @@ check_and_export_cluster_envs() {
   export GKE_ZONE
 }
 
-push_image() {
+check_and_export_image_id() {
   if [ "$IMAGE_ID" = "" ]; then
     echo 'Environment value named IMAGE_ID must be set'
     return 1
   fi
+
+  GKE_PROJECT=$(gcloud config list --format json | jq -r ".core.project")
+  IMAGE_TAG="gcr.io/$(echo $GKE_PROJECT | sed -e "s/-/_/g")/$IMAGE_ID"
+
+  export GKE_PROJECT
+  export IMAGE_ID
+  export IMAGE_TAG
+}
+
+push_image() {
+  set -e
+  check_and_export_image_id
 
   echo "Pushing image: $IMAGE_ID"
 
   echo "=== env ==="
   echo "GKE_PROJECT: $GKE_PROJECT"
   echo "IMAGE_ID: $IMAGE_ID"
+  echo "IMAGE_TAG: $IMAGE_TAG"
   echo
 
   echo "=== Build docker image ==="
-  local image_tag="gcr.io/$GKE_PROJECT/$IMAGE_ID"
   docker pull hakobera/locust
   docker build -t tmp-$IMAGE_ID .
-  docker tag -f tmp-$IMAGE_ID $image_tag
+  docker tag -f tmp-$IMAGE_ID $IMAGE_TAG
   echo
 
   echo "=== Push docker image ==="
-  gcloud preview docker push $image_tag
+  gcloud preview docker push $IMAGE_TAG
   echo
 }
 
 start() {
   check_and_export_cluster_envs
+  check_and_export_image_id
+
   echo "Starting GKE cluster: $GKE_CLUSTER in $GKE_ZONE"
 
   if [ "$GKE_NETWORK" = "" ]; then
     echo 'Environment value named GKE_NETWORK must be set'
     exit 1
-  fi
-  if [ "$IMAGE_ID" = "" ]; then
-    echo 'Environment value named IMAGE_ID must be set'
-    return 1
   fi
   if [ "$TARGET_URL" = "" ]; then
     echo 'Environment value named TARGET_URL must be set'
@@ -74,18 +82,26 @@ start() {
   fi
 
   echo "=== env ==="
-  echo "IMAGE_ID: $IMAGE_ID"
   echo "GKE_PROJECT: $GKE_PROJECT"
+  echo "IMAGE_ID: $IMAGE_ID"
+  echo "IMAGE_TAG: $IMAGE_TAG"
   echo "TARGET_URL: $TARGET_URL"
   echo
 
   local configdir=./config
+  local image_tag=$(echo $IMAGE_TAG | sed -e 's/\//\\\//g')
+  local target_url=$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')
+  local locust_master_config_file=locust-master-pod.json
+  local locust_web_config_file=locust-web-service.json
+  local locust_slave_config_file=locust-slave-replicationcontroller.json
 
   echo "=== Create network ==="
   create_network $GKE_NETWORK $NETWORK_RANGE
   add_firewall_rule $GKE_NETWORK ssh 22 $SOURCE_RANGES
   add_firewall_rule $GKE_NETWORK locust-web 8089 $SOURCE_RANGES
   echo
+
+  set -e
 
   echo "=== Create cluster ==="
   create_cluster $GKE_NETWORK $LOCUST_SLAVE_COUNT
@@ -95,12 +111,9 @@ start() {
   fi
   echo
 
-  local image_tag="gcr.io\/$GKE_PROJECT\/$IMAGE_ID"
-
   echo "=== Create locust master pod ==="
-  local locust_master_config_file=locust-master-pod.json
   sed -e "s/{{IMAGE_TAG}}/$image_tag/" \
-      -e "s/{{TARGET_URL}}/$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')/" \
+      -e "s/{{TARGET_URL}}/$target_url/" \
       $configdir/$locust_master_config_file.template \
       > $WORK_DIR/$locust_master_config_file
   cat $WORK_DIR/$locust_master_config_file
@@ -108,7 +121,6 @@ start() {
   echo
 
   echo "=== Create locust web service ==="
-  local locust_web_config_file=locust-web-service.json
   cat $configdir/$locust_web_config_file
   create_service locust-web-service $configdir/$locust_web_config_file
   echo
@@ -118,9 +130,8 @@ start() {
   echo "MASTER_HOST: $locust_master_ip"
 
   echo "=== Create locust slave replication controller ==="
-  local locust_slave_config_file=locust-slave-replicationcontroller.json
   sed -e "s/{{IMAGE_TAG}}/$image_tag/" \
-      -e "s/{{TARGET_URL}}/$(echo -n $TARGET_URL | sed -e 's/[]\/$*.^|[]/\\&/g')/" \
+      -e "s/{{TARGET_URL}}/$target_url/" \
       -e "s/{{MASTER_HOST}}/$locust_master_ip/" \
       -e "s/{{LOCUST_SLAVE_COUNT}}/$LOCUST_SLAVE_COUNT/" \
       $configdir/$locust_slave_config_file.template \

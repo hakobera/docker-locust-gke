@@ -1,21 +1,21 @@
 from locust import HttpLocust, TaskSet
 
 def login(self):
-    self.client.post("/login", {"username":"ellen_key", "password":"education"})
+    self.client.post("/", {"username":"ellen_key", "password":"education"})
 
-def index(self):
-    self.client.get("/")
+def slow(self):
+    self.client.get("/slow")
 
-def profile(self):
-    self.client.get("/profile")
+def fast(self):
+    self.client.get("/fast")
 
 class UserBehavior(TaskSet):
-    tasks = {index:2, profile:1}
+    tasks = { slow: 1, fast: 3 }
 
     def on_start(self):
         login(self)
 
 class WebsiteUser(HttpLocust):
     task_set = UserBehavior
-    min_wait=5000
-    max_wait=9000
+    min_wait=100
+    max_wait=1000

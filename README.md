@@ -18,14 +18,13 @@ $ ./script/cluster push
 ```
 $ export GKE_CLUSTER=<your-cluster>
 $ export GKE_ZONE=<your-zone>
+$ export GKE_NETWORK=<your-network>
 ```
 
 ### Start cluster
 
 ```
-$ IMAGE_ID=locust-gke \
-  GKE_NETWORK=<your-network> ]
-  TARGET_URL=<your-load-test-target-url> \
+$ TARGET_URL=<your-load-test-target-url> \
   LOCUST_SLAVE_COUNT=2 \
   ./script/cluster start
 ```

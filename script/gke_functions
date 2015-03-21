@@ -8,6 +8,7 @@
 
 GCE_CMD="gcloud compute"
 GKE_CMD="gcloud preview container"
+KUBECTL_CMD="$GKE_CMD kubectl"
 
 function create_network() {
   local network=$1
@@ -72,7 +73,12 @@ function create_cluster() {
   local machine_type=${3:-n1-standard-1}
   local cluster=${4:-$GKE_CLUSTER}
   local zone=${5:-$GKE_ZONE}
-  local scopes=${6:-default}
+  local scopes=${6:""}
+
+  SCOPES=""
+  if [ "$scopes" != "" ]; then
+    SCOPES="--scopes $scopes"
+  fi
 
   echo "Create cluster: $cluster"
   $GKE_CMD clusters create $cluster \
@@ -80,7 +86,7 @@ function create_cluster() {
     --network $network \
     --num-nodes $num_nodes \
     --machine-type $machine_type \
-    --scopes $scopes \
+    $SCOPES \
     --no-set-default
 }
 
@@ -107,13 +113,13 @@ function describe_cluster() {
   $GKE_CMD clusters describe $cluster --zone $zone
   echo
   echo "[Pods]"
-  $GKE_CMD pods list --cluster $cluster --zone $zone
+  $KUBECTL_CMD --cluster $cluster --zone $zone get pods
   echo
   echo "[Replication Controllers]"
-  $GKE_CMD replicationcontrollers list --cluster $cluster --zone $zone
+  $KUBECTL_CMD --cluster $cluster --zone $zone get replicationcontrollers
   echo
   echo "[Services]"
-  $GKE_CMD services list --cluster $cluster --zone $zone
+  $KUBECTL_CMD --cluster $cluster --zone $zone get services
 }
 
 function create_pod() {
@@ -123,23 +129,24 @@ function create_pod() {
   local zone=${4:-$GKE_ZONE}
 
   echo "Create pod: $pod"
-  $GKE_CMD pods create \
-    --name $pod \
+  $KUBECTL_CMD \
     --cluster $cluster \
     --zone $zone \
-    --config-file $config
+    create -f $config
 }
 
 function delete_pod() {
   local pod=$1
-  local cluster=${2:-$GKE_CLUSTER}
-  local zone=${3:-$GKE_ZONE}
+  local config=$2
+  local cluster=${3:-$GKE_CLUSTER}
+  local zone=${4:-$GKE_ZONE}
 
   echo "Delete pod: $pod"
   echo
-  $GKE_CMD pods delete $pod \
+  $KUBECTL_CMD \
     --cluster $cluster \
-    --zone $zone
+    --zone $zone \
+    delete -f $config
 }
 
 function get_pod_ip() {
@@ -147,7 +154,7 @@ function get_pod_ip() {
   local cluster=${2:-$GKE_CLUSTER}
   zone=${3:-$GKE_ZONE}
 
-  $GKE_CMD kubectl --cluster $cluster --zone $zone get pods -o json \
+  $KUBECTL_CMD --cluster $cluster --zone $zone get pods -o json \
     | jq -r ".items[] | select(.id == \"$pod\") | .currentState.podIP"
 }
 
@@ -156,7 +163,7 @@ function get_pod_host_ip() {
   local cluster=${2:-$GKE_CLUSTER}
   local zone=${3:-$GKE_ZONE}
 
-  $GKE_CMD kubectl --cluster $cluster --zone $zone get pods -o json \
+  $KUBECTL_CMD --cluster $cluster --zone $zone get pods -o json \
     | jq -r ".items[] | select(.id == \"$pod\") | .currentState.hostIP"
 }
 
@@ -167,22 +174,24 @@ function create_replication_controller() {
   local zone=${4:-$GKE_ZONE}
 
   echo "Create replication controllers: $replication_controller"
-  $GKE_CMD replicationcontrollers create \
+  $KUBECTL_CMD \
     --cluster $cluster \
     --zone $zone \
-    --config-file $config
+    create -f $config
 }
 
 function delete_replication_controller() {
   local replication_controller=$1
-  local cluster=${2:-$GKE_CLUSTER}
-  local zone=${3:-$GKE_ZONE}
+  local config=$2
+  local cluster=${3:-$GKE_CLUSTER}
+  local zone=${4:-$GKE_ZONE}
 
   echo "Delete replication controller: $replication_controller"
   echo
-  $GKE_CMD replicationcontrollers delete $replication_controller \
+  $KUBECTL_CMD \
     --cluster $cluster \
-    --zone $zone
+    --zone $zone \
+    delete -f $config
 }
 
 function create_service() {
@@ -192,22 +201,24 @@ function create_service() {
   local zone=${4:-$GKE_ZONE}
 
   echo "Create service: $service"
-  $GKE_CMD services create \
+  $KUBECTL_CMD \
     --cluster $cluster \
     --zone $zone \
-    --config-file $config
+    create -f $config
 }
 
 function delete_service() {
   local service=$1
-  local cluster=${2:-$GKE_CLUSTER}
-  local zone=${3:-$GKE_ZONE}
+  local config=$2
+  local cluster=${3:-$GKE_CLUSTER}
+  local zone=${4:-$GKE_ZONE}
 
   echo "Delete service: $service"
   echo
-  $GKE_CMD services delete $service \
+  $KUBECTL_CMD \
     --cluster $cluster \
-    --zone $zone
+    --zone $zone \
+    delete -f $config
 }
 
 function get_service_portal_ip() {
@@ -215,7 +226,7 @@ function get_service_portal_ip() {
   local cluster=${2:-$GKE_CLUSTER}
   local zone=${3:-$GKE_ZONE}
 
-  $GKE_CMD kubectl --cluster $cluster --zone $zone get services -o json \
+  $KUBECTL_CMD --cluster $cluster --zone $zone get services -o json \
     | jq -r ".items[] | select(.id == \"$service\") | .portalIP"
 }
 
@@ -226,10 +237,18 @@ function get_forwading_rule_ip() {
     | jq -r ".[] | select(.name == \"$name\") | .IPAddress"
 }
 
-function open_kubernetes_web() {
+function kubernetes_web_url() {
   local cluster=${1:-$GKE_CLUSTER}
   local zone=${2:-$GKE_ZONE}
 
-  open $($GKE_CMD clusters describe $cluster --zone $zone --format json | jq '{endpoint, user: .masterAuth.user, password: .masterAuth.password}' | jq -r '"https:////" + .user + ":" + .password + "@" + .endpoint + "/static/#/groups/host/selector/"')
+  $GKE_CMD clusters describe $cluster --zone $zone --format json | jq '{endpoint, user: .masterAuth.user, password: .masterAuth.password}' | jq -r '"https:////" + .user + ":" + .password + "@" + .endpoint + "/static/#/groups/host/selector/"'
 }
 
+function run_kubectl() {
+  local kubectl_cmd=${1}
+  local cluster=${2:-$GKE_CLUSTER}
+  local zone=${3:-$GKE_ZONE}
+
+  echo "$KUBECTL_CMD --cluster $cluster --zone $zone $kubectl_cmd"
+  $KUBECTL_CMD --cluster $cluster --zone $zone $kubectl_cmd
+}

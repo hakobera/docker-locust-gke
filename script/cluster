@@ -146,11 +146,13 @@ start() {
 }
 
 stop() {
+  local configdir=./config
+
   check_and_export_cluster_envs
   echo "Stopping GKE cluster: $GKE_CLUSTER in $GKE_ZONE"
 
   echo "=== Delete services expternal load balancer ==="
-  delete_service locust-web-service
+  delete_service locust-web-service $configdir/$locust_web_config_file
 
   echo "=== Delete cluster ==="
   delete_cluster
@@ -169,13 +171,28 @@ status() {
 open_kubernetes() {
   check_and_export_cluster_envs
   echo "Open kubernetes web: $GKE_CLUSTER in $GKE_ZONE"
-  open_kubernetes_web
+  open $(kubernetes_web_url)
+}
+
+show_kubernetes() {
+  check_and_export_cluster_envs
+  echo "$(kubernetes_web_url)"
 }
 
 open_locust_web() {
   check_and_export_cluster_envs
   echo "Open locust web: $GKE_CLUSTER in $GKE_ZONE"
   open http://$(get_forwading_rule_ip locust-web-service):$LOCUST_WEB_PORT
+}
+
+show_locust_web() {
+  check_and_export_cluster_envs
+  echo "http://$(get_forwading_rule_ip locust-web-service):$LOCUST_WEB_PORT"
+}
+
+run() {
+  check_and_export_cluster_envs
+  run_kubectl "$1"
 }
 
 case "$1" in
@@ -191,14 +208,23 @@ case "$1" in
   open-kubernetes)
     open_kubernetes
     ;;
+  show-kubernetes)
+    show_kubernetes
+    ;;
   open-locust)
     open_locust_web
+    ;;
+  show-locust)
+    show_locust_web
     ;;
   push)
     push_image
     ;;
+  run)
+    run "$2"
+    ;;
   *)
-    echo "Usage: cluster {start|stop|status|open-kubernetes|open-locust}" >&2
+    echo "Usage: cluster {start|stop|status|open-kubernetes|show-kubernetes|open-locust|open-locust|push}" >&2
     exit 1
     ;;
 esac

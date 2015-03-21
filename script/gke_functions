@@ -72,6 +72,7 @@ function create_cluster() {
   local machine_type=${3:-n1-standard-1}
   local cluster=${4:-$GKE_CLUSTER}
   local zone=${5:-$GKE_ZONE}
+  local scopes=${6:-default}
 
   echo "Create cluster: $cluster"
   $GKE_CMD clusters create $cluster \
@@ -79,6 +80,7 @@ function create_cluster() {
     --network $network \
     --num-nodes $num_nodes \
     --machine-type $machine_type \
+    --scopes $scopes \
     --no-set-default
 }
 

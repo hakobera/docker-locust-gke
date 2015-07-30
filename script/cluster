@@ -62,7 +62,7 @@ push_image() {
   echo
 
   echo "=== Push docker image ==="
-  gcloud preview docker push $IMAGE_TAG
+  gcloud docker push $IMAGE_TAG
   echo
 }
 
